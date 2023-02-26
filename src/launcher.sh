@@ -12,7 +12,6 @@ set -o errexit
 # pipefail is supported by busybox
 set -o pipefail
 
-CONFIG_DIR="/data/Config"
 ADMIN_KEY_FILE="${CONFIG_DIR}/admin.txt"
 CONFIG_FILE="${CONFIG_DIR}/options.json"
 # shellcheck disable=SC2034
@@ -26,28 +25,20 @@ source logging.sh
 log_debug "Ensuring ${CONFIG_DIR} directory exists."
 mkdir -p "${CONFIG_DIR}"
 
-if [[ "${CONTAINER_PRESERVE_CONFIG:-}" == "true" && -f "${CONFIG_FILE}" ]]; then
-  log_warn "CONTAINER_PRESERVE_CONFIG is set: Not updating options.json"
+# Update configuration file
+log "Generating options.json file."
+./set_options.js > "${CONFIG_FILE}"
+
+# Save admin access key to file if set.  Delete file if unset.
+if [[ "${FOUNDRY_ADMIN_KEY:-}" ]]; then
+  log "Setting 'Admin Access Key'."
+  echo "${FOUNDRY_ADMIN_KEY}" | ./set_password.js > "${ADMIN_KEY_FILE}"
 else
-  # Update configuration file
-  log "Generating options.json file."
-  ./set_options.js > "${CONFIG_FILE}"
+  log_error "No 'Admin Access Key' has been configured."
+  exit 1
 fi
 
-if [[ "${CONTAINER_PRESERVE_CONFIG:-}" == "true" && -f "${ADMIN_KEY_FILE}" ]]; then
-  log_warn "CONTAINER_PRESERVE_CONFIG is set: Not updating admin.txt"
-else
-  # Save admin access key to file if set.  Delete file if unset.
-  if [[ "${FOUNDRY_ADMIN_KEY:-}" ]]; then
-    log "Setting 'Admin Access Key'."
-    echo "${FOUNDRY_ADMIN_KEY}" | ./set_password.js > "${ADMIN_KEY_FILE}"
-  else
-    log_warn "No 'Admin Access Key' has been configured."
-    rm "${ADMIN_KEY_FILE}" >&/dev/null || true
-  fi
-fi
-
-if [ "$1" = "--shell" ]; then
+if [ "${1-}" = "--shell" ]; then
   log_warn "Starting a shell as requested by argument --shell"
   /bin/sh
   exit $?
@@ -79,4 +70,4 @@ done < <(env -0)
 log "Starting Foundry Virtual Tabletop."
 # We want ENV_VAR_CARRY_LIST to word split
 # shellcheck disable=SC2086
-env -i $ENV_VAR_CARRY_LIST node "$@" || log_error "Node process exited with code $?"
+exec env -i $ENV_VAR_CARRY_LIST node resources/app/main.mjs --headless --port=$PORT --noupdate --dataPath=/data

@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 
 const DATA_PATH: string = "/data";
-const FOUNDRY_PORT: number = 30000;
 const LANGUAGE: string = "en.core";
-const MAXIMUM_PORT: number = 65535;
-const MINIMUM_PORT: number = 1;
 const UPDATE_CHANNEL: string = "release";
 
 let parsedDemoConfig: any = undefined;
@@ -45,23 +42,18 @@ let options: object = {
   fullscreen: false,
   hostname: process.env.FOUNDRY_HOSTNAME || null,
   language: process.env.FOUNDRY_LANGUAGE || LANGUAGE,
-  localHostname: process.env.FOUNDRY_LOCAL_HOSTNAME || null,
+  localHostname: null,
   passwordSalt: process.env.FOUNDRY_PASSWORD_SALT || null,
-  port: FOUNDRY_PORT,
+  port: process.env.PORT,
   protocol: process.env.FOUNDRY_PROTOCOL || null,
-  proxyPort: clampEnv(
-    process.env.FOUNDRY_PROXY_PORT,
-    MINIMUM_PORT,
-    MAXIMUM_PORT,
-    null,
-  ),
-  proxySSL: process.env.FOUNDRY_PROXY_SSL == "true",
+  proxyPort: 443,
+  proxySSL: true,
   routePrefix: process.env.FOUNDRY_ROUTE_PREFIX || null,
-  sslCert: process.env.FOUNDRY_SSL_CERT || null,
-  sslKey: process.env.FOUNDRY_SSL_KEY || null,
+  sslCert: null,
+  sslKey: null,
   updateChannel: UPDATE_CHANNEL,
-  upnp: process.env.FOUNDRY_UPNP == "true",
-  upnpLeaseDuration: process.env.FOUNDRY_UPNP_LEASE_DURATION || null,
+  upnp: false,
+  upnpLeaseDuration: null,
   world: process.env.FOUNDRY_WORLD || null,
 };
 

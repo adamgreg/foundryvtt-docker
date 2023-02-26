@@ -3,7 +3,6 @@ ARG FOUNDRY_RELEASE_URL
 ARG FOUNDRY_USERNAME
 ARG FOUNDRY_VERSION=10.291
 ARG NODE_IMAGE_VERSION=16-alpine3.15
-ARG VERSION
 
 FROM node:${NODE_IMAGE_VERSION} as compile-typescript-stage
 
@@ -49,24 +48,36 @@ RUN \
   unzip -d dist ${ARCHIVE} 'resources/*'; \
   fi
 
+
+FROM golang:1.20-alpine as gcsfuse-stage
+
+# Build gcsfuse
+RUN apk --update add git fuse fuse-dev;
+RUN GO111MODULE=auto go get -u github.com/googlecloudplatform/gcsfuse
+
 FROM node:${NODE_IMAGE_VERSION} as final-stage
 
 ARG FOUNDRY_UID=421
 ARG FOUNDRY_VERSION
-ARG TARGETPLATFORM
-ARG VERSION
+ARG DATA_BUCKET
 
 LABEL com.foundryvtt.version=${FOUNDRY_VERSION}
 LABEL org.opencontainers.image.authors="markf+github@geekpad.com"
 LABEL org.opencontainers.image.vendor="Geekpad"
 
 ENV FOUNDRY_HOME="/home/foundry"
+ENV FOUNDRY_UID=${FOUNDRY_UID}
 ENV FOUNDRY_VERSION=${FOUNDRY_VERSION}
+ENV DATA_BUCKET=${DATA_BUCKET}
 
 WORKDIR ${FOUNDRY_HOME}
 
+# Add fuse (for gcsfuse mount of data dir) and tini
+RUN apk --update add fuse tini
+
 COPY --from=optional-release-stage /root/dist/ .
 COPY --from=compile-typescript-stage /root/dist/ .
+COPY --from=gcsfuse-stage /go/bin/gcsfuse /usr/bin
 COPY \
   package.json \
   package-lock.json \
@@ -83,18 +94,8 @@ RUN addgroup --system --gid ${FOUNDRY_UID} foundry \
   sed \
   su-exec \
   tzdata \
-  && npm install && echo ${VERSION} > image_version.txt
+  && npm install
 
-VOLUME ["/data"]
-# HTTP Server
-EXPOSE 30000/TCP
-# TURN Server
-# Not exposing TURN ports due to bug in Docker.
-# See: https://github.com/moby/moby/issues/11185
-# EXPOSE 33478/UDP
-# EXPOSE 49152-65535/UDP
-
-ENTRYPOINT ["./entrypoint.sh"]
-CMD ["resources/app/main.mjs", "--port=30000", "--headless", "--noupdate",\
-  "--dataPath=/data"]
+ENTRYPOINT ["/sbin/tini", "--", "./entrypoint.sh"]
+CMD []
 HEALTHCHECK --start-period=3m --interval=30s --timeout=5s CMD ./check_health.sh

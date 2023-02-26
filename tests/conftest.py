@@ -49,14 +49,14 @@ def main_container(image_tag):
             "CONTAINER_URL_FETCH_RETRY": 5,
             "CONTAINER_VERBOSE": True,
             "FOUNDRY_ADMIN_KEY": "atropos",
-            "FOUNDRY_GID": "foundry",
             "FOUNDRY_PASSWORD": os.environ.get("FOUNDRY_PASSWORD"),
-            "FOUNDRY_UID": "foundry",
+            "FOUNDRY_UID": 421,
             "FOUNDRY_USERNAME": os.environ.get("FOUNDRY_USERNAME"),
             "TIMEZONE": "UTC",
+            "PORT": 8080,
         },
         name=MAIN_SERVICE_NAME,
-        ports={"30000/tcp": None},
+        ports={"8080/tcp": None},
         volumes={str(Path.cwd() / Path("data")): {"bind": "/data", "driver": "local"}},
     )
     yield container

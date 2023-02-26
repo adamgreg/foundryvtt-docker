@@ -15,6 +15,7 @@ services:
       - FOUNDRY_PASSWORD=<your_password>
       - FOUNDRY_USERNAME=<your_username>
       - FOUNDRY_ADMIN_KEY=atropos
+      - PORT=30000
       # - CONTAINER_CACHE=/data/container_cache
       # - CONTAINER_PATCHES=/data/container_patches
       # - CONTAINER_PATCH_URLS=
@@ -39,15 +40,9 @@ services:
       # - FOUNDRY_MINIFY_STATIC_FILES=
       # - FOUNDRY_PASSWORD_SALT=
       # - FOUNDRY_PROTOCOL=
-      # - FOUNDRY_PROXY_PORT=
-      # - FOUNDRY_PROXY_SSL=false
       # - FOUNDRY_RELEASE_URL=
       # - FOUNDRY_ROUTE_PREFIX=
-      # - FOUNDRY_SSL_CERT=
-      # - FOUNDRY_SSL_KEY=
-      # - FOUNDRY_UID=foundry
-      # - FOUNDRY_UPNP=false
-      # - FOUNDRY_UPNP_LEASE_DURATION=
+      # - FOUNDRY_UID=421
       # - FOUNDRY_VERSION=10.291
       # - FOUNDRY_WORLD=
       # - TIMEZONE=US/Eastern

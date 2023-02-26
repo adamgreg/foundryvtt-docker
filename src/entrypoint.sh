@@ -20,10 +20,8 @@ LOG_NAME="Entrypoint"
 # shellcheck source=src/logging.sh
 source logging.sh
 
-image_version=$(cat image_version.txt)
-
-if [ "$1" = "--version" ]; then
-  echo "${image_version}"
+if [ "${1-}" = "--version" ]; then
+  echo "${FOUNDRY_VERSION}"
   exit 0
 fi
 
@@ -34,7 +32,7 @@ if [ "$(id -u)" = 0 ]; then
   log_debug "Timezone set to: ${TIMEZONE:-UTC}"
 fi
 
-log "Starting felddy/foundryvtt container v${image_version}"
+log "Starting felddy/foundryvtt container v${FOUNDRY_VERSION}"
 log_debug "CONTAINER_VERBOSE set.  Debug logging enabled."
 
 cookiejar_file="cookiejar.json"
@@ -42,18 +40,9 @@ license_min_length=24
 secret_file="/run/secrets/config.json"
 
 # Calculate a user-agent comment to use in for curl and node-fetch requests
-CONTAINER_USER_AGENT_COMMENT="(felddy/foundryvtt:${image_version})"
+CONTAINER_USER_AGENT_COMMENT="(felddy/foundryvtt:${FOUNDRY_VERSION})"
 curl_user_agent=$(curl --version | awk 'NR==1 {print $1 "/" $2}')" ${CONTAINER_USER_AGENT_COMMENT}"
 node_user_agent="node-fetch ${CONTAINER_USER_AGENT_COMMENT}"
-
-# Warn user if the container version does not start with the FOUNDRY_VERSION.
-# The FOUNDRY_VERSION looks like x.yyy
-# The container version is a semver x.y.z
-if [[ ${image_version%.*} != "${FOUNDRY_VERSION}" ]]; then
-  log_warn "FOUNDRY_VERSION has been manually set and does not match the container's version."
-  log_warn "Expected ${image_version%.*} but found ${FOUNDRY_VERSION}"
-  log_warn "The container may not function properly with this version mismatch."
-fi
 
 # Check for raft secrets
 if [ -f "${secret_file}" ]; then
@@ -70,6 +59,16 @@ if [ -f "${secret_file}" ]; then
   FOUNDRY_PASSWORD_SALT=${secret_password_salt:-${FOUNDRY_PASSWORD_SALT:-}}
   FOUNDRY_USERNAME=${secret_username:-${FOUNDRY_USERNAME:-}}
 fi
+
+# Make the data directory, and mount to it
+log "Mounting data volume..."
+mkdir -p /data
+gcsfuse --uid=$FOUNDRY_UID --gid=$FOUNDRY_UID --file-mode=777 --dir-mode=777 -o allow_other $DATA_BUCKET /data
+
+# Make a symbolic link for the config directory to the ephemeral overlay fs - do not store config in the bucket
+log "Creating ephemeral config dir..."
+mkdir -p /tmp/config
+ln -s /tmp/config "${CONFIG_DIR}"
 
 # Check to see if an install is required
 install_required=false
@@ -210,67 +209,59 @@ if [ $install_required = true ]; then
   ./patch_lang.js
 fi # install required
 
-if [ ! -f "${LICENSE_FILE}" ]; then
-  log "Installation not yet licensed."
-  log_debug "Ensuring ${CONFIG_DIR} directory exists."
-  mkdir -p "${CONFIG_DIR}"
-  set +o nounset # length check will fail
-  if [[ ${#FOUNDRY_LICENSE_KEY} -ge ${license_min_length} ]]; then
-    set -o nounset
-    log "Applying license key passed via FOUNDRY_LICENSE_KEY."
-    # FOUNDRY_LICENSE_KEY is long enough to be a key
-    echo "{ \"license\": \"${FOUNDRY_LICENSE_KEY}\" }" | tr -d '-' > "${LICENSE_FILE}"
-  elif [ -f ${cookiejar_file} ]; then
-    log "Attempting to fetch license key from authenticated account."
-    if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
-      # FOUNDRY_LICENSE_KEY can be an index, try passing it.
-      # CONTAINER_VERBOSE default value should not be quoted.
-      # shellcheck disable=SC2086
-      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
-        --user-agent="${node_user_agent}" \
-        --select="${FOUNDRY_LICENSE_KEY}" \
-        "${cookiejar_file}")
-    else
-      # shellcheck disable=SC2086
-      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
-        --user-agent="${node_user_agent}" \
-        "${cookiejar_file}")
-    fi
-    echo "{ \"license\": \"${fetched_license_key}\" }" > "${LICENSE_FILE}"
-  else
-    log_warn "Unable to apply a license key since neither a license key nor credentials were provided.  The license key will need to be entered in the browser."
-  fi
+set +o nounset # length check will fail
+if [[ ${#FOUNDRY_LICENSE_KEY} -ge ${license_min_length} ]]; then
   set -o nounset
+  log "Applying license key passed via FOUNDRY_LICENSE_KEY."
+  # FOUNDRY_LICENSE_KEY is long enough to be a key
+  echo "{ \"license\": \"${FOUNDRY_LICENSE_KEY}\" }" | tr -d '-' > "${LICENSE_FILE}"
+elif [ -f ${cookiejar_file} ]; then
+  log "Attempting to fetch license key from authenticated account."
+  if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
+    # FOUNDRY_LICENSE_KEY can be an index, try passing it.
+    # CONTAINER_VERBOSE default value should not be quoted.
+    # shellcheck disable=SC2086
+    fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
+      --user-agent="${node_user_agent}" \
+      --select="${FOUNDRY_LICENSE_KEY}" \
+      "${cookiejar_file}")
+  else
+    # shellcheck disable=SC2086
+    fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
+      --user-agent="${node_user_agent}" \
+      "${cookiejar_file}")
+  fi
+  echo "{ \"license\": \"${fetched_license_key}\" }" > "${LICENSE_FILE}"
 else
-  log "Not modifying existing installation license key."
+  log_warn "Unable to apply a license key since neither a license key nor credentials were provided.  The license key will need to be entered in the browser."
 fi
+set -o nounset
 
 # ensure the permissions are set correctly
-log "Setting data directory permissions."
-FOUNDRY_UID="${FOUNDRY_UID:-foundry}"
-FOUNDRY_GID="${FOUNDRY_GID:-foundry}"
+log "Setting data and config directory permissions."
+
 # skip files matching CONTAINER_PRESERVE_OWNER or already belonging to the right user and group
+chown foundry:foundry /tmp/config "${CONFIG_DIR}"
 find /data \
   -regex "${CONTAINER_PRESERVE_OWNER:-}" -prune -or \
-  "(" -user "${FOUNDRY_UID}" -and -group "${FOUNDRY_GID}" ")" -or \
-  -exec chown "${FOUNDRY_UID}:${FOUNDRY_GID}" {} +
+  "(" -user foundry -and -group foundry ")" -or \
+  -exec chown foundry:foundry {} +
 log_debug "Completed setting directory permissions."
 
-if [ "$1" = "--root-shell" ]; then
+if [ "${1-}" = "--root-shell" ]; then
   log_warn "Starting a shell as requested by argument --root-shell"
   /bin/sh
   exit $?
 fi
 
 # drop privileges and handoff to launcher
-log "Starting launcher with uid:gid as ${FOUNDRY_UID}:${FOUNDRY_GID}."
-export CONTAINER_PRESERVE_CONFIG FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
+log "Starting launcher with uid:gid as foundry:foundry."
+export CONFIG_DIR FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
   FOUNDRY_DEMO_CONFIG FOUNDRY_HOSTNAME FOUNDRY_IP_DISCOVERY FOUNDRY_LANGUAGE \
   FOUNDRY_LOCAL_HOSTNAME FOUNDRY_MINIFY_STATIC_FILES FOUNDRY_PASSWORD_SALT \
-  FOUNDRY_PROTOCOL FOUNDRY_PROXY_PORT FOUNDRY_PROXY_SSL FOUNDRY_ROUTE_PREFIX \
-  FOUNDRY_SSL_CERT FOUNDRY_SSL_KEY FOUNDRY_UPNP FOUNDRY_UPNP_LEASE_DURATION \
+  FOUNDRY_PROTOCOL FOUNDRY_ROUTE_PREFIX \
   FOUNDRY_WORLD
-su-exec "${FOUNDRY_UID}:${FOUNDRY_GID}" ./launcher.sh "$@" \
+su-exec foundry:foundry ./launcher.sh "$@" \
   || log_error "Launcher exited with error code: $?"
 
 # If the container requested a new S3 URL but disabled the cache
