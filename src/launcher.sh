@@ -21,10 +21,6 @@ LOG_NAME="Launcher"
 # shellcheck source=src/logging.sh
 source logging.sh
 
-# ensure the config directory exists
-log_debug "Ensuring ${CONFIG_DIR} directory exists."
-mkdir -p "${CONFIG_DIR}"
-
 # Update configuration file
 log "Generating options.json file."
 ./set_options.js > "${CONFIG_FILE}"

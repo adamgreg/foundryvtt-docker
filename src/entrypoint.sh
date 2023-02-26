@@ -65,11 +65,6 @@ log "Mounting data volume..."
 mkdir -p /data
 gcsfuse --uid=$FOUNDRY_UID --gid=$FOUNDRY_UID --file-mode=777 --dir-mode=777 -o allow_other $DATA_BUCKET /data
 
-# Make a symbolic link for the config directory to the ephemeral overlay fs - do not store config in the bucket
-log "Creating ephemeral config dir..."
-mkdir -p /tmp/config
-ln -s /tmp/config "${CONFIG_DIR}"
-
 # Check to see if an install is required
 install_required=false
 # Track whether an S3 URL request is made.
@@ -209,6 +204,10 @@ if [ $install_required = true ]; then
   ./patch_lang.js
 fi # install required
 
+# ensure the config directory exists
+log_debug "Ensuring ${CONFIG_DIR} directory exists."
+mkdir -p "${CONFIG_DIR}"
+
 set +o nounset # length check will fail
 if [[ ${#FOUNDRY_LICENSE_KEY} -ge ${license_min_length} ]]; then
   set -o nounset
@@ -238,10 +237,9 @@ fi
 set -o nounset
 
 # ensure the permissions are set correctly
-log "Setting data and config directory permissions."
+log "Setting data directory permissions."
 
 # skip files matching CONTAINER_PRESERVE_OWNER or already belonging to the right user and group
-chown foundry:foundry /tmp/config "${CONFIG_DIR}"
 find /data \
   -regex "${CONTAINER_PRESERVE_OWNER:-}" -prune -or \
   "(" -user foundry -and -group foundry ")" -or \
