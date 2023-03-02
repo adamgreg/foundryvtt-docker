@@ -208,33 +208,36 @@ fi # install required
 log_debug "Ensuring ${CONFIG_DIR} directory exists."
 mkdir -p "${CONFIG_DIR}"
 
-set +o nounset # length check will fail
-if [[ ${#FOUNDRY_LICENSE_KEY} -ge ${license_min_length} ]]; then
-  set -o nounset
-  log "Applying license key passed via FOUNDRY_LICENSE_KEY."
-  # FOUNDRY_LICENSE_KEY is long enough to be a key
-  echo "{ \"license\": \"${FOUNDRY_LICENSE_KEY}\" }" | tr -d '-' > "${LICENSE_FILE}"
-elif [ -f ${cookiejar_file} ]; then
-  log "Attempting to fetch license key from authenticated account."
-  if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
-    # FOUNDRY_LICENSE_KEY can be an index, try passing it.
-    # CONTAINER_VERBOSE default value should not be quoted.
-    # shellcheck disable=SC2086
-    fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
-      --user-agent="${node_user_agent}" \
-      --select="${FOUNDRY_LICENSE_KEY}" \
-      "${cookiejar_file}")
+# Download / store license key, unless the JSON file already exists
+if [ ! -f "${LICENSE_FILE}" ]; then
+  set +o nounset # length check will fail
+  if [[ ${#FOUNDRY_LICENSE_KEY} -ge ${license_min_length} ]]; then
+    set -o nounset
+    log "Applying license key passed via FOUNDRY_LICENSE_KEY."
+    # FOUNDRY_LICENSE_KEY is long enough to be a key
+    echo "{ \"license\": \"${FOUNDRY_LICENSE_KEY}\" }" | tr -d '-' > "${LICENSE_FILE}"
+  elif [ -f ${cookiejar_file} ]; then
+    log "Attempting to fetch license key from authenticated account."
+    if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
+      # FOUNDRY_LICENSE_KEY can be an index, try passing it.
+      # CONTAINER_VERBOSE default value should not be quoted.
+      # shellcheck disable=SC2086
+      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
+        --user-agent="${node_user_agent}" \
+        --select="${FOUNDRY_LICENSE_KEY}" \
+        "${cookiejar_file}")
+    else
+      # shellcheck disable=SC2086
+      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
+        --user-agent="${node_user_agent}" \
+        "${cookiejar_file}")
+    fi
+    echo "{ \"license\": \"${fetched_license_key}\" }" > "${LICENSE_FILE}"
   else
-    # shellcheck disable=SC2086
-    fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
-      --user-agent="${node_user_agent}" \
-      "${cookiejar_file}")
+    log_warn "Unable to apply a license key since neither a license key nor credentials were provided.  The license key will need to be entered in the browser."
   fi
-  echo "{ \"license\": \"${fetched_license_key}\" }" > "${LICENSE_FILE}"
-else
-  log_warn "Unable to apply a license key since neither a license key nor credentials were provided.  The license key will need to be entered in the browser."
+  set -o nounset
 fi
-set -o nounset
 
 # ensure the permissions are set correctly
 log "Setting data directory permissions."
@@ -252,6 +255,26 @@ if [ "${1-}" = "--root-shell" ]; then
   exit $?
 fi
 
+# Check for Foundry lock file from an existing process
+if [ -d "$CONFIG_DIR/options.json.lock" ]; then
+  log_error "Lock file existed upon start up!! Exiting now!"
+  exit 1
+fi
+
+# Trap SIGTERM from Google Cloud Run, and send SIGINT to Foundry to make it shut down gracefully
+cleanup() {
+  log_warn "SIGTERM received!"
+  log "Sending SIGINT to node..."
+  kill -SIGINT $LAUNCHER_PID
+  sleep 5
+  if [ -d "$CONFIG_DIR/options.json.lock" ]; then
+    log_error "Lock still exists after 5 seconds! Deleting..."
+  fi
+  rm -rf "$CONFIG_DIR/options.json.lock"
+  exit
+}
+trap cleanup SIGTERM
+
 # drop privileges and handoff to launcher
 log "Starting launcher with uid:gid as foundry:foundry."
 export CONFIG_DIR FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
@@ -259,8 +282,9 @@ export CONFIG_DIR FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
   FOUNDRY_LOCAL_HOSTNAME FOUNDRY_MINIFY_STATIC_FILES FOUNDRY_PASSWORD_SALT \
   FOUNDRY_PROTOCOL FOUNDRY_ROUTE_PREFIX \
   FOUNDRY_WORLD
-su-exec foundry:foundry ./launcher.sh "$@" \
-  || log_error "Launcher exited with error code: $?"
+su-exec foundry:foundry ./launcher.sh "$@" &
+LAUNCHER_PID=$!
+wait $LAUNCHER_PID
 
 # If the container requested a new S3 URL but disabled the cache
 # we are going to sleep forever to prevent a download loop.
@@ -272,4 +296,5 @@ if [[ "${requested_s3_url}" == "true" && "${CONTAINER_CACHE:-}" == "" ]]; then
   while true; do sleep 60; done
 fi
 
+log "Container exiting"
 exit 0
